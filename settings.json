@@ -1,0 +1,38 @@
+{
+  "faz": {
+    "enabled": true,
+    "url": "https://10.4.81.31",
+    "username": "api-monitor",
+    "adom": "root"
+  },
+  "devices": [
+    {
+      "name": "004_DC-FW-DMZ",
+      "devid": "FG6H1FTB22903740",
+      "platform": "FortiGate-601F"
+    },
+    {
+      "name": "004_DC-FW-PARTNER",
+      "devid": "FG5H1ETB19908551",
+      "platform": "FortiGate-501E"
+    }
+  ],
+  "monitor": {
+    "interval_minutes": 20,
+    "max_rows": 500,
+    "watch_actions": ["add", "edit", "delete", "move", "clone"],
+    "watch_keywords": [
+      "firewall.policy",
+      "firewall.policy6",
+      "firewall.address",
+      "firewall.addrgrp",
+      "firewall.service",
+      "firewall.vip",
+      "firewall.ippool"
+    ]
+  },
+  "telegram": {
+    "chat_id": "1737523194"
+  },
+  "faz_dashboard_url": "https://10.4.81.31/ui/dvm/main/fazgroups/-3"
+}
