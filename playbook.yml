@@ -1,0 +1,84 @@
+---
+# ============================================================
+# Playbook: FAZ Audit Change Rule Monitor
+# Mục đích : Pull code từ GitHub, cài dependencies,
+#             chạy monitor.py định kỳ qua AWX Schedule
+# Target   : AWX EE Container (localhost)
+# ============================================================
+
+- name: FAZ Audit Change Rule - Run Monitor
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    # ── Đường dẫn làm việc trong container ──────────────────
+    project_dir: "/runner/project"
+    venv_dir:    "/runner/project/.venv"
+    python_bin:  "/runner/project/.venv/bin/python"
+    pip_bin:     "/runner/project/.venv/bin/pip"
+
+    # ── File cấu hình (đã có sẵn trong repo GitHub) ─────────
+    secrets_file:  "{{ project_dir }}/secrets.json"
+    settings_file: "{{ project_dir }}/settings.json"
+
+  tasks:
+
+    # ── 1. Kiểm tra Python tồn tại ──────────────────────────
+    - name: Check Python3 available
+      ansible.builtin.command: python3 --version
+      register: py_check
+      changed_when: false
+
+    - name: Show Python version
+      ansible.builtin.debug:
+        msg: "{{ py_check.stdout }}"
+
+    # ── 2. Tạo virtualenv nếu chưa có ───────────────────────
+    - name: Create virtualenv
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ venv_dir }}
+        creates: "{{ venv_dir }}/bin/activate"
+
+    # ── 3. Cài dependencies từ requirements.txt ─────────────
+    - name: Install Python dependencies
+      ansible.builtin.command:
+        cmd: "{{ pip_bin }} install -r {{ project_dir }}/requirements.txt --quiet"
+      register: pip_result
+      changed_when: "'Successfully installed' in pip_result.stdout"
+
+    # ── 4. Kiểm tra secrets.json tồn tại ────────────────────
+    - name: Check secrets.json exists
+      ansible.builtin.stat:
+        path: "{{ secrets_file }}"
+      register: secrets_stat
+
+    - name: Fail if secrets.json missing
+      ansible.builtin.fail:
+        msg: >
+          secrets.json không tìm thấy tại {{ secrets_file }}.
+          Hãy thêm file này vào repo hoặc dùng AWX Credential/Extra Vars.
+      when: not secrets_stat.stat.exists
+
+    # ── 5. Chạy monitor.py ───────────────────────────────────
+    - name: Run monitor.py
+      ansible.builtin.command:
+        cmd: "{{ python_bin }} {{ project_dir }}/monitor.py"
+        chdir: "{{ project_dir }}"
+      register: monitor_result
+      # Timeout 55 phút - AWX schedule mỗi 1 giờ để tránh overlap
+      timeout: 3300
+      environment:
+        PYTHONUNBUFFERED: "1"
+        PYTHONPATH: "{{ project_dir }}"
+
+    # ── 6. In output của monitor.py ─────────────────────────
+    - name: Show monitor output
+      ansible.builtin.debug:
+        msg: "{{ monitor_result.stdout_lines }}"
+      when: monitor_result.stdout_lines | length > 0
+
+    - name: Show monitor stderr (nếu có)
+      ansible.builtin.debug:
+        msg: "{{ monitor_result.stderr_lines }}"
+      when: monitor_result.stderr_lines | length > 0
