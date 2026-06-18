@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-telegram_notify.py — Gửi cảnh báo thay đổi firewall rule qua Telegram qua Proxy.
+telegram_notify.py — Gửi cảnh báo thay đổi firewall rule qua Telegram đi Direct Internet.
 """
 
 import json
@@ -13,11 +13,11 @@ log = logging.getLogger("telegram")
 _MAX_LEN = 4096
 
 _ACTION_HEADER = {
-    "add":    ("🟢", "ADD RULE (THÊM MỚI)"),
-    "edit":   ("🟡", "EDIT RULE (SỬA)"),
-    "delete": ("🔴", "DELETE RULE (XÓA)"),
-    "move":   ("🔵", "MOVE RULE (DI CHUYỂN)"),
-    "clone":  ("🟣", "CLONE RULE (NHÂN BẢN)"),
+    "add":     ("🟢", "ADD RULE (THÊM MỚI)"),
+    "edit":    ("🟡", "EDIT RULE (SỬA)"),
+    "delete":  ("🔴", "DELETE RULE (XÓA)"),
+    "move":    ("🔵", "MOVE RULE (DI CHUYỂN)"),
+    "clone":   ("🟣", "CLONE RULE (NHÂN BẢN)"),
 }
 
 _DEV_ICON = {
@@ -27,7 +27,9 @@ _DEV_ICON = {
 
 
 def _send_raw(token: str, chat_id: str, text: str) -> bool:
-    url     = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    
+    # Đóng gói dữ liệu gửi đi (giữ lại parse_mode để hiển thị đậm/nhạt HTML)
     payload = json.dumps({
         "chat_id":                  chat_id,
         "text":                     text[:_MAX_LEN],
@@ -38,21 +40,18 @@ def _send_raw(token: str, chat_id: str, text: str) -> bool:
     req = urllib.request.Request(
         url, data=payload, headers={"Content-Type": "application/json"}
     )
+    
     try:
-        # ─── ĐIỀN THÔNG TIN PROXY NỘI BỘ TẠI ĐÂY ───
-        proxy_address = "http://10.4.255.98:9090" 
-        
-        proxy_support = urllib.request.ProxyHandler({'http': proxy_address, 'https': proxy_address})
-        opener        = urllib.request.build_opener(proxy_support)
-        
-        with opener.open(req, timeout=15) as r:
+        # Gửi request thẳng Internet bằng urlopen mặc định công nghệ cao không proxy
+        with urllib.request.urlopen(req, timeout=15) as r:
             body = json.loads(r.read().decode("utf-8"))
             
         if body.get("ok"):
-            log.info("Telegram OK  msg_id=%s", body["result"]["message_id"])
+            log.info("Telegram OK   msg_id=%s", body["result"]["message_id"])
             return True
         log.error("Telegram FAIL: %s", body)
         return False
+
     except Exception as e:
         log.error("Telegram exception: %s", e)
         return False
@@ -82,7 +81,7 @@ def build_alert_custom(ev: dict) -> str:
         f"{dev_icon} <b>Thiết bị  :</b> <code>{dev_name}</code>",
         f"🔧 <b>Platform  :</b> <code>{platform}</code>",
         f"📂 <b>Đối tượng :</b> <code>{cfgpath}</code>",
-        f"🏷  <b>RULE ID   :</b> <code>{pol_id}</code>",  # <--- Đã sửa đổi tại đây
+        f"🏷  <b>RULE ID   :</b> <code>{pol_id}</code>",
         f"👤 <b>Người sửa :</b> <code>{user_info}</code>",
         f"🕐 <b>Thời gian :</b> <code>{date_s} {time_s}</code>",
     ]
