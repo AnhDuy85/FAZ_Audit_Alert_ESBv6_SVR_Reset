@@ -82,7 +82,7 @@ def build_alert_custom(ev: dict) -> str:
         f"🔧 <b>Platform  :</b> <code>{platform}</code>",
         f"📂 <b>Đối tượng :</b> <code>{cfgpath}</code>",
         f"🏷  <b>RULE ID   :</b> <code>{pol_id}</code>",
-        f"👤 <b>Người sửa :</b> <code>{user_info}</code>",
+        f"👤 <b>User :</b> <code>{user_info}</code>",
         f"🕐 <b>Thời gian :</b> <code>{date_s} {time_s}</code>",
     ]
     return "\n".join(lines)
