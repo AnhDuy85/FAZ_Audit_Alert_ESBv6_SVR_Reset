@@ -64,6 +64,7 @@
       environment:
         PYTHONUNBUFFERED: "1"
         PYTHONPATH: "{{ project_dir }}"
+        TZ: "Asia/Ho_Chi_Minh"  # <--- THÊM DÒNG NÀY ĐỂ FIX MÚI GIỜ CONTAINER
 
     # ── 6. In output của monitor.py ─────────────────────────
     - name: Show monitor output
