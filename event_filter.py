@@ -3,8 +3,7 @@ event_filter.py — Lọc và phân loại event log từ FortiAnalyzer (FAZ).
 """
 
 import re
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def normalize_action(raw_action: str) -> str:
@@ -15,8 +14,15 @@ def normalize_action(raw_action: str) -> str:
 def is_config_change(log_entry: dict, watch_actions: list, watch_keywords: list) -> bool:
     """
     True nếu log entry là 1 sự kiện thay đổi config khớp filter.
+
+    LUU Y: watch_actions trong settings.json can bao gom them "disable"
+    va "enable" neu muon nhan canh bao khi rule bi tat/bat, vi du:
+        "watch_actions": ["edit", "add", "delete", "move", "clone",
+                           "disable", "enable"]
+    Neu khong co "disable"/"enable" trong watch_actions, cac su kien nay
+    se bi loc bo du normalize_faz_event() da nhan dien dung.
     """
-    if (log_entry.get("type", "").lower() != "event" 
+    if (log_entry.get("type", "").lower() != "event"
             or log_entry.get("subtype", "").lower() != "system"):
         return False
 
@@ -42,6 +48,16 @@ def extract_object_id(log_entry: dict) -> str:
     return "—"
 
 
+# change_type (do faz_client._classify_change gan vao record) -> action
+# chuan de is_config_change()/telegram_notify dung duoc ma khong can sua
+# logic o 2 noi do.
+_CHANGE_TYPE_TO_ACTION = {
+    "DISABLE_RULE": "disable",
+    "ENABLE_RULE":  "enable",
+    "DELETE_RULE":  "delete",
+}
+
+
 def normalize_faz_event(row: dict) -> dict:
     """
     Chuẩn hóa log thô từ FortiAnalyzer sang định dạng chuẩn để monitor.py xử lý.
@@ -51,6 +67,7 @@ def normalize_faz_event(row: dict) -> dict:
 
     # ĐƯA TOÀN BỘ KEY VỀ CHỮ THƯỜNG & XÓA KÝ TỰ ĐẶC BIỆT ĐỂ KHÔNG BỊ TRỐNG TRƯỜNG
     # Ví dụ: "User Name" -> "username", "Date/Time" -> "datetime", "Time Stamp" -> "timestamp"
+    # "change_type" (do faz_client gan) -> "changetype"
     raw = {}
     for k, v in row.items():
         clean_key = str(k).lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
@@ -58,54 +75,19 @@ def normalize_faz_event(row: dict) -> dict:
 
     # 1. Lấy tin nhắn log thô từ FAZ
     msg_text = raw.get("msg") or raw.get("eventmessage") or ""
-    
+
     # 2. BÓC TÁCH NGƯỜI SỬA (Đã được làm sạch key)
     user_val = raw.get("user") or raw.get("username") or raw.get("userid") or raw.get("hostowner") or "—"
     ui_val   = raw.get("ui") or raw.get("logonuserinterface") or raw.get("userinterface") or ""
-    
+
     # 3. Phân tách Hành động (Action) và Đối tượng (cfgpath)
-    action_val = str(raw.get("action") or raw.get("eventaction") or "").lower()
-    cfgpath_val = str(raw.get("cfgpath") or "").lower()
-    
-    if msg_text:
-        if not action_val:
-            for act in ["edit", "add", "delete", "move", "clone"]:
-                if act in msg_text.lower():
-                    action_val = act
-                    break
-        if not cfgpath_val:
-            for kw in ["firewall.policy", "firewall.address", "firewall.addrgrp", "firewall.service", "firewall.vip", "firewall.ippool"]:
-                if kw in msg_text.lower():
-                    cfgpath_val = kw
-                    break
-    if not cfgpath_val:
-        cfgpath_val = "firewall.policy"
-
-    import re  # ← để ở ĐẦU FILE, không để trong hàm
-from datetime import datetime, timezone
-
-def normalize_faz_event(row: dict) -> dict:
-    if not row:
-        return {}
-
-    # Bước 1: Clean key
-    raw = {}
-    for k, v in row.items():
-        clean_key = str(k).lower().replace(" ", "").replace("/", "").replace("_", "").replace("-", "")
-        raw[clean_key] = v
-
-    # Bước 2: msg_text (phải khai báo TRƯỚC khi dùng ở bước 4)
-    msg_text = raw.get("msg") or raw.get("eventmessage") or ""
-
-    # Bước 3: user, action, cfgpath... (giữ nguyên như cũ)
-    user_val    = raw.get("user") or raw.get("username") or raw.get("userid") or raw.get("hostowner") or "—"
-    ui_val      = raw.get("ui") or raw.get("logonuserinterface") or raw.get("userinterface") or ""
     action_val  = str(raw.get("action") or raw.get("eventaction") or "").lower()
     cfgpath_val = str(raw.get("cfgpath") or "").lower()
+    cfgattr_val = str(raw.get("cfgattr") or "")
 
     if msg_text:
         if not action_val:
-            for act in ["edit", "add", "delete", "move", "clone"]:
+            for act in ["edit", "add", "delete", "move", "clone", "disable", "enable"]:
                 if act in msg_text.lower():
                     action_val = act
                     break
@@ -118,7 +100,25 @@ def normalize_faz_event(row: dict) -> dict:
     if not cfgpath_val:
         cfgpath_val = "firewall.policy"
 
-    # Bước 4: THỜI GIAN ← paste đoạn fix vào ĐÂY
+    # 3b. GHI ĐÈ action THEO change_type (do faz_client._classify_change tinh)
+    # neu co, vi day la thong tin chinh xac nhat: phan biet duoc DISABLE
+    # ngay ca khi FAZ chi ghi action = "edit" chung chung kem cfgattr
+    # "status[enable->disable]". Neu khong co field nay (vi du log tu
+    # nguon khac khong qua faz_client), fallback ve action_val nhu cu.
+    change_type_val = raw.get("changetype")
+    if change_type_val in _CHANGE_TYPE_TO_ACTION:
+        action_val = _CHANGE_TYPE_TO_ACTION[change_type_val]
+    elif action_val == "edit" and "status" in cfgattr_val.lower():
+        # Fallback: tu doi chieu cfgattr ngay tai day, phong truong hop
+        # row nay khong di qua faz_client._classify_change() (vi du duoc
+        # normalize truc tiep tu nguon khac).
+        low = cfgattr_val.lower()
+        if "->disable" in low:
+            action_val = "disable"
+        elif "->enable" in low:
+            action_val = "enable"
+
+    # 4. THỜI GIAN
     date_val = raw.get("date") or ""
     time_val = raw.get("time") or ""
 
@@ -175,7 +175,7 @@ def normalize_faz_event(row: dict) -> dict:
             date_val = match_msg.group(1).replace("/", "-")
             time_val = match_msg.group(2)
 
-    # Bước 5: cfgobj (giữ nguyên như cũ)
+    # 5. cfgobj
     cfgobj_val = raw.get("cfgobj") or raw.get("policyid") or ""
     if not cfgobj_val and msg_text:
         match_bracket = re.search(
@@ -208,6 +208,7 @@ def normalize_faz_event(row: dict) -> dict:
         "action":  action_val,
         "cfgpath": cfgpath_val,
         "cfgobj":  cfgobj_val,
+        "cfgattr": cfgattr_val,
         "user":    user_val,
         "ui":      ui_val,
         "msg":     msg_text,

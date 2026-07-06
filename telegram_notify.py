@@ -18,11 +18,14 @@ _ACTION_HEADER = {
     "delete":  ("🔴", "DELETE RULE (XÓA)"),
     "move":    ("🔵", "MOVE RULE (DI CHUYỂN)"),
     "clone":   ("🟣", "CLONE RULE (NHÂN BẢN)"),
+    "disable": ("🟠", "DISABLE RULE (TẮT)"),
+    "enable":  ("🟢", "ENABLE RULE (BẬT LẠI)"),
 }
 
 _DEV_ICON = {
     "004_DC-FW-DMZ":     "🛡",
     "004_DC-FW-PARTNER": "🔒",
+    "004_DC-FW-INTERNET": "🔒",
 }
 
 
@@ -74,6 +77,7 @@ def build_alert_custom(ev: dict) -> str:
     time_s     = ev.get("time", "")
     
     user_info  = f"{user} ({ui})" if ui else user
+    cfgattr    = ev.get("cfgattr", "")
 
     lines = [
         f"{icon} <b>{verb}</b>",
@@ -85,6 +89,8 @@ def build_alert_custom(ev: dict) -> str:
         f"👤 <b>User :</b> <code>{user_info}</code>",
         f"🕐 <b>Thời gian :</b> <code>{date_s} {time_s}</code>",
     ]
+    if cfgattr:
+        lines.append(f"📝 <b>Chi tiết  :</b> <code>{cfgattr}</code>")
     return "\n".join(lines)
 
 

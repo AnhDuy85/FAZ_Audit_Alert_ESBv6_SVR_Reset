@@ -2,7 +2,6 @@
   "faz": {
     "enabled": true,
     "url": "https://10.4.81.31",
-    "username": "api-monitor",
     "adom": "root"
   },
   "devices": [
@@ -15,12 +14,17 @@
       "name": "004_DC-FW-PARTNER",
       "devid": "FG5H1ETB19908551",
       "platform": "FortiGate-501E"
+    },
+    {
+      "name": "004_DC-FW-INTERNET",
+      "devid": "FG4H1FT924905793",
+      "platform": "FortiGate-401F"
     }
   ],
   "monitor": {
     "interval_minutes": 20,
     "max_rows": 500,
-    "watch_actions": ["add", "edit", "delete", "move", "clone"],
+    "watch_actions": ["edit", "add", "delete", "move", "clone", "disable", "enable"],
     "watch_keywords": [
       "firewall.policy",
       "firewall.policy6",
