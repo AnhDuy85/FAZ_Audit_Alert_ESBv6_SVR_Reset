@@ -62,10 +62,10 @@
     - name: Show Proxy Network Test Result
       ansible.builtin.debug:
         msg: "{{ proxy_check.stderr_lines if proxy_check.rc != 0 else proxy_check.stdout_lines }}"
-    # ── 5. Chạy monitor.py ───────────────────────────────────
-    - name: Run monitor.py
+        # ── 5. Chạy reset_monitor.py ───────────────────────────────────
+    - name: Run reset_monitor.py
       ansible.builtin.command:
-        cmd: "{{ python_bin }} {{ project_dir }}/monitor.py"
+        cmd: "{{ python_bin }} {{ project_dir }}/reset_monitor.py"
         chdir: "{{ project_dir }}"
       register: monitor_result
       # Timeout 55 phút - AWX schedule mỗi 1 giờ để tránh overlap
@@ -73,11 +73,7 @@
       environment:
         PYTHONUNBUFFERED: "1"
         PYTHONPATH: "{{ project_dir }}"
-        TZ: "Asia/Ho_Chi_Minh"  # <--- THÊM DÒNG NÀY ĐỂ FIX MÚI GIỜ CONTAINER
-        # ── THÊM CẤU HÌNH PROXY VÀO ĐÂY (NẾU CÓ) ────────────────
-        #http_proxy: "https://10.4.255.98:9090"
-        #https_proxy: "https://10.4.255.98:9090"
-
+        TZ: "Asia/Ho_Chi_Minh"
     # ── 6. In output của monitor.py ─────────────────────────
     - name: Show monitor output
       ansible.builtin.debug:
