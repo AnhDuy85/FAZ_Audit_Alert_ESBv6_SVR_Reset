@@ -58,6 +58,29 @@ _CHANGE_TYPE_TO_ACTION = {
 }
 
 
+def pick_traffic_sample(rows: list) -> dict:
+    """
+    Tu list dong log traffic (tra ve tu FAZClient.query_traffic_by_policy),
+    chon 1 mau dai dien de enrich alert doi rule (monitor.py).
+
+    Rows da duoc sap xep desc theo thoi gian (dong dau = gan thoi diem
+    doi rule nhat) - don gian chon dong dau tien. Neu can nhieu combo
+    src/dst khac nhau trong tuong lai co the mo rong ham nay.
+    """
+    if not rows:
+        return {}
+    r = rows[0]
+    return {
+        "t_srcip":   r.get("srcip") or "",
+        "t_dstip":   r.get("dstip") or "",
+        "t_srcport": r.get("srcport") or "",
+        "t_dstport": r.get("dstport") or "",
+        "t_service": r.get("service") or "",
+        "t_action":  r.get("action") or "",
+        "t_sample_count": len(rows),
+    }
+
+
 def normalize_faz_event(row: dict) -> dict:
     """
     Chuẩn hóa log thô từ FortiAnalyzer sang định dạng chuẩn để monitor.py xử lý.

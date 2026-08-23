@@ -1,115 +1,86 @@
-# FortiGate Rule Change Monitor (Production)
-KET HOP: FortiGate truc tiep (nguon chinh) + FortiAnalyzer (nguon du phong)
+# FAZ Reset Alert Monitor (SHB <-> NAPAS)
 
-Canh bao Telegram day du chi tiet khi co thay doi firewall rule (them /
-sua / xoa / di chuyen vi tri / enable-disable / nhan ban) tren cac
-FortiGate, bao gom:
+Canh bao Telegram khi ket noi giua SHB (cac may chu ESB) va NAPAS (DC1/DC2)
+bi **RESET** (Firewall Action = `server-rst` hoac `client-rst`), doc du
+lieu tu **FortiAnalyzer LOG TRAFFIC** cua thiet bi `004_DC-FW-PARTNER`.
 
-- Source, Destination, Service/Port
-- Trang thai (Enable/Disable), Action (Accept/Deny/IPsec), NAT
-- Policy ID / ten object bi thay doi
-- User thuc thi + giao dien (GUI/SSH/API)
-- Thoi gian thay doi
+> **GHI CHU**: He thong nay CHI CON DUY NHAT 1 chuc nang - canh bao RESET
+> ket noi SHB<->NAPAS qua `reset_monitor.py`. Toan bo code khong con lien
+> quan (monitor.py, event_filter.py, fgt_client.py, debug_faz.py,
+> debug_reset_filters*.py) da bi XOA HOAN TOAN khoi repo - khong con ton
+> tai duoi bat ky dang nao (kho phai chi "khong dung toi" nhu truoc).
 
-| Device              | FortiGate IP        | Platform        |
-|---------------------|---------------------|-----------------|
-| 004_DC-FW-DMZ       | 10.4.30.30          | FortiGate-601F  |
-| 004_DC-FW-PARTNER   | 10.4.30.38          | FortiGate-501E  |
+## Nguon du lieu
 
-## Kien truc - vi sao ket hop FAZ + FGT truc tiep
+- Log **TRAFFIC** tren FortiAnalyzer (khong phai log event/system).
+- Thiet bi: `004_DC-FW-PARTNER` (co dinh - khong quet cac FortiGate
+  khac dan du chung van khai bao trong `devices[]` cua settings.json).
+- Dieu kien loc: `srcip` thuoc dai IP SHB, `dstip` thuoc dai IP NAPAS,
+  `dstport` trong danh sach cong da khai bao, `action` = `server-rst`
+  hoac `client-rst`.
 
-**FGT truc tiep (nguon chinh)**:
-- GET /api/v2/log/memory(or disk)/event[/system] -> event log (audit log)
-  -> action, cfgpath, object id, user, thoi gian
-- GET /api/v2/cmdb/firewall/policy -> chi tiet source/dest/service/status
-  (FAZ KHONG co thong tin nay)
+### Dai IP / cong dang giam sat (settings.json -> reset_monitor)
 
-**FAZ (nguon du phong)**:
-- FortiGate forward log len FAZ qua "config log fortianalyzer setting" -
-  cau hinh nay DOC LAP voi "config log memory/disk setting" tren tung FGT.
-- Neu local log tren 1 FGT bi tat/sai (da gap thuc te: 003_DC-FW-INT co
-  "log memory setting status disable"), event do se KHONG xuat hien qua
-  FGT truc tiep - nhung FAZ van co the da ghi nhan qua forward log.
-- monitor.py merge 2 nguon, loai trung lap theo
-  (cfgpath, object_id, action, date, time). Event chi co tu FAZ duoc
-  danh dau "Phat hien qua FAZ" trong alert - dau hieu local log can kiem tra.
+**Nguon (SHB/ESB)**:
+```
+10.18.38.21   (DR-ESB6)
+10.4.38.21    (ESB6-PRO01)
+10.4.38.22    (ESB6-PRO02)
+10.4.38.23    (ESB6-PRO03)
+10.4.38.24    (ESB6-PRO04)
+10.4.38.43    (ESB6-PRO05)
+10.4.38.44    (ESB6-PRO06)
+10.4.38.51-56 (ESBv6.1)
+```
 
-**Ket qua**: alert co day du source/dest/port (tu FGT API) VA khong bi mat
-event do FGT local log gap su co (nho FAZ).
+**Dich (NAPAS)**:
+```
+10.1.153.2  (NAPAS-PROD-DC1)
+10.1.249.2  (NAPAS-PROD-DC2)
+```
+
+**Cong**: `35787`, `35789`
 
 ## Cau truc file
 
 ```
-monitor.py            entry point - merge FGT + FAZ, gui alert
-fgt_client.py          FortiGate REST API - event log + policy detail + snapshot
-faz_client.py           FortiAnalyzer Log View REST API - event log du phong
-event_filter.py         loc/parse/merge/dedup event tu 2 nguon
-telegram_notify.py       gui canh bao Telegram
-settings.json           cau hinh (commit duoc)
-secrets.json.example    template (commit)
-secrets.json            token/password that (gitignore)
-logs/monitor.log        tu sinh
-logs/snapshots/         snapshot policy moi thiet bi (cho case delete)
+reset_monitor.py         entry point - quet FAZ log traffic, gui alert Telegram
+faz_client.py             FortiAnalyzer Log View REST API client (chi con query_traffic_resets())
+reset_filter.py           chuan hoa/phan loai log traffic RST (FAST_RESET / LONG_CONN_RESET)
+telegram_notify.py        gui canh bao Telegram (alert ca nhan + tong hop dinh ky + canh bao he thong)
+debug_reset.py            tra cuu thu cong 1 khoang thoi gian tuy chinh (khong gui Telegram)
+settings.json             cau hinh (commit duoc)
+secrets.json.example      template (commit)
+secrets.json              token that (gitignore)
+logs/reset_monitor.log    tu sinh
+logs/reset_seen.json      dedup giua cac lan chay (tranh spam khi interval overlap)
+logs/monitor_state.json   dem loi lien tiep + tich luy cua so tong hop dinh ky
 ```
 
-Yeu cau: Python 3.9+, stdlib only.
+Yeu cau: Python 3.9+, xem `requirements.txt` (`requests`, `urllib3`).
 
-## API su dung
-
-### FortiGate (bat buoc)
+## API FortiAnalyzer su dung
 
 ```
-GET /api/v2/log/memory/event           (v7.x, filter subtype==system)
-GET /api/v2/log/memory/event/system    (v6.4.x, subtype trong path)
-GET /api/v2/log/disk/event[/system]    (fallback neu memory log disable)
-GET /api/v2/cmdb/firewall/policy       -> toan bo policy hien tai
-GET /api/v2/cmdb/firewall/{address|vip|addrgrp|...}/{name}  -> named object
-```
-fgt_client.fetch_event_logs() tu dong thu ca 4 endpoint theo thu tu, dung
-endpoint dau tien thanh cong - hoat dong voi ca v6.4.x va v7.x.
-
-### FortiAnalyzer (tuy chon - faz.enabled trong settings.json)
-
-```
-/jsonrpc /sys/login/user                  -> JSONRPC session
-/cgi-bin/module/flatui_auth               -> set cookie CURRENT_SESSION + CSRF
-POST /p/logview/logsearch/run/            -> {"tid": N}
-POST /p/logview/logsearch/fetch/          -> {"data":[...], "percentage":100}
-```
-GHI CHU: /jsonrpc KHONG expose /logview/* (-32600 Invalid Request).
-API dung la /p/logview/logsearch/... - xac dinh bang DevTools.
-
-## Cau hinh FortiGate - tao REST API Admin
-
-Tren MOI FortiGate can giam sat, CLI:
-
-```
-config system api-user
-    edit "monitor-readonly"
-        set accprofile "super_admin"
-        set vdom "root"
-        config trusthost
-            edit 1
-                set ipv4-trusthost <IP_MAY_CHAY_SCRIPT>/32
-            next
-        end
-    next
-end
+/jsonrpc  method "add"  url /logview/adom/{adom}/logsearch   -> tao search task, tra {"tid": N}
+/jsonrpc  method "get"  url /logview/adom/{adom}/logsearch/{tid} -> poll ket qua
 ```
 
-Sau khi tao qua CLI, vao GUI System > Administrators > REST API Administrator,
-click vao user moi tao -> Generate de lay token (hien 1 lan duy nhat).
+Auth: Bearer API Token (`secrets.json -> faz_api_token`), khong can
+username/password hay dang nhap Web UI.
 
-Neu "REST API Admin" bi an trong menu Create New: dang nhap bang account
-Super_Admin, hoac tao truoc qua CLI nhu tren roi generate token qua GUI.
+### GHI CHU QUAN TRONG DA DEBUG THUC TE (logtype "traffic")
 
-## Cau hinh FAZ - lay Data Source ID (faz_devid)
-
-Tren FAZ: Log View > Logs > Logs, tim cot "Data Source ID" cho thiet bi
-tuong ung (vd FG6H1FTB22903740). Day la gia tri dien vao
-`devices[].faz_devid` trong settings.json.
-
-Tai khoan FAZ can quyen doc Log View cho ADOM tuong ung.
+- **KHONG the loc log traffic theo `device: [{"devid": "..."}]`** du dung
+  dung devid that - FAZ nay tra ve `total-count=0` bat ke dieu kien.
+  Ly do: `devid` ghi trong tung dong log TRAFFIC khong trung voi `devid`
+  quan ly trong Device Manager/settings.json.
+- **Cach dung dung (da verify)**: dung `device: [{"devid": "All_Device"}]`,
+  roi dua dieu kien `devname = "004_DC-FW-PARTNER"` **vao trong chuoi
+  filter** cung voi `srcip`/`dstip`/`dstport`/`action`. Xem
+  `faz_client.py -> query_traffic_resets()` de biet chi tiet.
+- Filter dung dau "=" don, noi bang "and"/"or" viet thuong, gia tri IP/
+  chuoi bo trong dau nhay kep, so (port) khong can nhay kep.
 
 ## Cau hinh script
 
@@ -121,80 +92,180 @@ secrets.json:
 ```json
 {
   "telegram_bot_token": "<token tu BotFather>",
-  "faz_password": "<mat khau user FAZ - bo qua neu faz.enabled=false>",
-  "fgt_api_tokens": {
-    "004_DC-FW-DMZ":     "<token tu 004_DC-FW-DMZ>",
-    "004_DC-FW-PARTNER": "<token tu 004_DC-FW-PARTNER>"
-  }
+  "faz_api_token": "<API token cua user FAZ, quyen doc Log View ADOM root>"
 }
 ```
 
-settings.json - dien telegram.chat_id. Neu KHONG dung FAZ, dat
-`"faz": {"enabled": false}` - khi do khong can faz_password/faz_devid.
+settings.json -> dien `telegram.chat_id`. Phan `reset_monitor` da co san
+cau hinh mac dinh (xem tren) - chi can sua neu doi dai IP/port/thiet bi.
 
-### Them thiet bi moi
+## Phan loai muc do (Telegram alert)
 
-1. Them block vao `devices[]` trong settings.json:
-   ```json
-   {
-     "name":      "003_DC-FW-INT",
-     "fgt_url":   "https://10.20.2.64:10443",
-     "platform":  "FortiGate-401F",
-     "vdom":      "root",
-     "faz_devid": "FG4H1FT924905795"
-   }
-   ```
-   `faz_devid` co the bo qua neu khong dung FAZ cho thiet bi nay.
-2. Them token vao `fgt_api_tokens` trong secrets.json voi KEY TRUNG KHOP
-   chinh xac voi `name` o tren.
-3. Chay `python monitor.py --test` de tao snapshot ban dau cho thiet bi moi.
+Moi phien RST duoc phan loai theo `duration` (xem
+`reset_filter.classify_reset_duration()`):
+
+| Nhan               | Dieu kien       | Y nghia |
+|--------------------|-----------------|---------|
+| ⚡ RESET NHANH      | `duration <= 5s`| Bi tu choi/reset gan nhu ngay lap tuc sau khi ket noi - dang chu y hon |
+| ⏳ RESET SAU KET NOI KEO DAI | `duration > 5s` | Da truyen du lieu mot thoi gian roi moi bi reset |
+
+Nguong `5s` chinh o **dong 39 file `reset_filter.py`**:
+```python
+return "FAST_RESET" if duration <= 5 else "LONG_CONN_RESET"
+```
+
+## Cau hinh nang cao (do vá cho muc do "dich vu cap 3")
+
+```jsonc
+"reset_monitor": {
+  ...
+  "interval_minutes": 1,             // khop lich AWX quet moi 1 phut
+  "query_lookback_minutes": 2,       // quet RONG hon interval de khong bo sot khi job chay tre
+  "summary_interval_minutes": 5,     // moi X phut gui 1 tin TONG HOP dem so lan RESET
+  "consecutive_fail_threshold": 3,   // FAZ query loi lien tiep bao nhieu lan thi gui canh bao he thong
+  "heartbeat_url": ""                // (tuy chon) URL ping healthchecks.io/Cronitor - xem duoi
+}
+```
+
+### 1. MOI phien RESET duoc alert NGAY LAP TUC + tong hop dinh ky
+
+Hanh vi hien tai:
+- **Moi phien RESET moi phat hien** (server-rst hoac client-rst) duoc
+  gui alert Telegram **ngay lap tuc**, khong gop/giu lai - dung 1 tin
+  cho 1 phien.
+- **THEM VAO DO** (khong thay the), moi `summary_interval_minutes` phut
+  (mac dinh 5), he thong gui **1 tin TONG HOP** dem tong so phien RESET
+  xay ra trong khoang do (breakdown server-rst/client-rst, FAST/LONG
+  reset, khoang thoi gian dau-cuoi).
+
+Co che tong hop nay dung **state file** (`logs/monitor_state.json`) de
+**cong don qua nhieu lan chay** - bat buoc phai lam vay vi
+`interval_minutes=1` nghia la 1 lan quet chi co ~1-2 phut du lieu,
+khong du de tong hop dung 5 phut trong 1 lan quet don le.
+
+### 2. Lich quet 1 phut/lan tren AWX
+
+`interval_minutes=1` + `query_lookback_minutes=2` nghia la: **lich AWX
+Schedule can dat `*/1 * * * *`** (moi 1 phut), va moi lan quet se query
+FAZ trong 2 phut gan nhat (co du 1 phut de tranh bo sot neu job chay
+tre) - dedup theo sessionid tu dong loai bo cac phien da alert trong
+lan quet truoc do bi trung do overlap.
+
+**Luu y hieu nang**: chay moi 1 phut = ~1440 lan query FAZ/ngay (gap
+~10 lan so voi truoc day quet moi 10 phut). Nen theo doi FAZ trong vai
+ngay dau de dam bao khong anh huong hieu nang chung cua FAZ (dac biet
+neu nhieu nguoi/he thong khac cung dang dung chung FAZ Log View).
+
+`playbook.yml` da chinh `timeout: 45` (bat buoc phai NHO HON 60s de
+khong bi 2 job AWX chay chong lan nhau khi lich la 1 phut).
+
+### 3. Canh bao khi HE THONG GIAM SAT gap su co (khong phai canh bao RESET)
+
+Neu FAZ query loi **lien tiep** >= `consecutive_fail_threshold` lan (vi
+du token het han, mat mang toi FAZ), `reset_monitor.py` gui **1 tin
+Telegram rieng** dang "🆘 HỆ THỐNG GIÁM SÁT GẶP SỰ CỐ" - chi gui 1 lan
+duy nhat (khong spam moi lan loi), va gui tiep 1 tin "✅ ĐÃ PHỤC HỒI"
+khi query thanh cong tro lai.
+
+**GIOI HAN QUAN TRONG**: co che nay chi phat hien duoc khi script **VAN
+DANG CHAY** nhung FAZ tra loi loi. Neu script **NGUNG CHAY HOAN TOAN**
+(AWX job bi xoa, cron bi tat, server sap) thi **KHONG co gi tu bao**
+duoc - can dich vu heartbeat ben ngoai (xem muc 3).
+
+### 4. (Da bo) Gop tin khi co "burst" nhieu RESET cung luc
+
+Truoc day co co che gop nhieu alert thanh 1 tin khi vuot nguong - **da
+BO HOAN TOAN** ca code lan cau hinh, theo yeu cau moi nhat ("co canh bao
+thi canh bao luon"). Khong con `build_alert_burst_summary()` hay
+`burst_alert_threshold` trong he thong nua.
+
+### 5. Heartbeat / dead-man switch (KHUYEN NGHI cho dich vu cap 3)
+
+`reset_monitor.py` co the ping 1 URL ben ngoai (vi du
+[healthchecks.io](https://healthchecks.io) - mien phi cho da so nhu
+cau) sau MOI lan chay thanh cong. Dich vu do se **tu canh bao** neu
+KHONG nhan duoc ping dung han - day la cach DUY NHAT phat hien truong
+hop script ngung chay hoan toan (khong phai chi loi FAZ).
+
+Thiet lap:
+1. Tao 1 "check" tren healthchecks.io (hoac tuong tu), lay URL ping.
+2. Dien vao `settings.json -> reset_monitor.heartbeat_url`.
+3. Cau hinh "Period" tren healthchecks.io = 10 phut (khop
+   `interval_minutes`), "Grace Time" = vai phut du de chiu duoc 1-2 lan
+   cham tre truoc khi bao dong.
+4. healthchecks.io se tu gui email/Telegram/Slack rieng cua ho khi mat
+   heartbeat - **doc lap hoan toan** voi bot Telegram cua reset_monitor.py
+   (dung neu bot/token cua chinh he thong nay cung bi loi).
+
+### 6. GHI CHU VE DEDUP TREN AWX (chua giai quyet trietde, CANG QUAN TRONG voi lich 1 phut)
+
+`logs/reset_seen.json` va `logs/monitor_state.json` chi ton tai trong
+**workspace cua 1 lan chay AWX** - neu AWX KHONG co persistent volume
+mount vao `project_dir`, 2 file nay se **mat sau moi job**, dan toi:
+- Dedup khong hoat dong qua cac lan chay (co the gui trung alert neu co
+  overlap giua 2 lan quet lien tiep - hiem, vi da dung sessionid lam
+  khoa dedup va sessionid khong lap lai).
+- Bo dem loi lien tiep bi reset ve 0 moi lan chay (giam do nhay cua
+  co che #1 tren AWX, vi tung lan chay deu "bat dau lai tu 0").
+
+**Neu dung AWX**: kiem tra Project co mount persistent volume vao
+`/runner/project` khong. Neu KHONG, can:
+- Cau hinh AWX Execution Environment mount 1 volume ben ngoai vao
+  `project_dir/logs/`, HOAC
+- Doi dedup/state sang luu ngoai (Redis, database, hoac 1 file tren
+  host qua AWX Container Group volume mount) - lien he neu can trien
+  khai phan nay.
+
+**QUAN TRONG THEM voi lich 1 phut**: neu `logs/monitor_state.json`
+KHONG persistent, co che **TONG HOP DINH KY (muc 1)** se **KHONG BAO
+GIO** gui duoc tin tong hop dung nghia - vi moi lan chay se coi
+`window_start_ts` la `None` (state moi tinh), dan den cua so "tong hop"
+luon bi reset ve 0 truoc khi kip tich luy du 5 phut. Neu gap tinh huong
+nay, se thay dong log "Da gui TONG HOP..." KHONG BAO GIO xuat hien
+trong `logs/reset_monitor.log` du da chay rat lau - day la dau hieu ro
+rang AWX dang khong persistent workspace giua cac lan chay.
 
 ## Test
 
 ```bash
-python monitor.py --test
+python reset_monitor.py --test
 ```
 
-Test se:
-- Ket noi toi tat ca thiet bi FGT (system/status, cmdb/firewall/policy,
-  log event) + TAO SNAPSHOT BAN DAU (quan trong - xem "Luu y ve DELETE")
-- Ket noi FAZ (neu enabled) - login + query 24h cho tung faz_devid
-- Gui tin nhan test Telegram
+Gui tin nhan Telegram mau (theo dung format alert that) + kiem tra ket
+noi FAZ API Token.
 
-### Chan doan loi ket noi FGT (--diagnose)
+## Tra cuu thu cong (khong gui Telegram)
 
 ```bash
-python monitor.py --diagnose 003_DC-FW-INT
+python debug_reset.py --start "2026-08-20 09:50:00"
 ```
 
-In RAW response (khong cat) cua 4 endpoint FGT - dung khi --test bao loi
-403/404/HTML kho hieu. Phan biet loi tu FortiGate (JSON) vs loi tu
-proxy/web server phia truoc (HTML error page).
+Them `--raw` de in ra request/response tho gui/nhan tu FAZ khi can debug.
 
 ## Chay
 
 ```bash
-python monitor.py          # 1 lan - dung cho cron / AWX
-python monitor.py --loop   # lap moi interval_minutes (settings.json)
+python reset_monitor.py          # 1 lan - dung cho cron / AWX
+python reset_monitor.py --loop   # lap moi interval_minutes (settings.json)
 ```
 
 ### Cron (Linux), moi 10 phut
 ```cron
-*/10 * * * * cd /opt/FW_AUDIT && /usr/bin/python3 monitor.py >> logs/cron.log 2>&1
+*/10 * * * * cd /opt/FAZ_RESET_ALERT && /usr/bin/python3 reset_monitor.py >> logs/cron.log 2>&1
 ```
 
 ### systemd (chay --loop lien tuc)
 
-/etc/systemd/system/fgt-monitor.service:
+/etc/systemd/system/faz-reset-monitor.service:
 ```ini
 [Unit]
-Description=FortiGate Rule Change Monitor
+Description=FAZ Reset Alert Monitor (SHB <-> NAPAS)
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/FW_AUDIT
-ExecStart=/usr/bin/python3 monitor.py --loop
+WorkingDirectory=/opt/FAZ_RESET_ALERT
+ExecStart=/usr/bin/python3 reset_monitor.py --loop
 Restart=always
 RestartSec=5
 
@@ -204,56 +275,14 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now fgt-monitor
-journalctl -u fgt-monitor -f
+sudo systemctl enable --now faz-reset-monitor
+journalctl -u faz-reset-monitor -f
 ```
 
-## Logic chi tiet
+### AWX / Ansible
 
-1. (Neu FAZ enabled) Login FAZ 1 lan, query event log theo faz_devid cho
-   tung thiet bi, chuan hoa ve cung format voi log FGT.
-2. Voi moi thiet bi:
-   - FGT: lay event log, loc type=event/subtype=system/action trong
-     watch_actions/cfgpath chua watch_keywords, trong N phut gan nhat
-   - Merge voi event FAZ tuong ung (dedup theo cfgpath+object_id+action+
-     date+time) - event chi co tu FAZ duoc danh dau "_source=FAZ"
-3. Xac dinh object_id:
-   - firewall.policy/policy6: SO (vd "859")
-   - firewall.address/vip/service/addrgrp/...: TEN (vd "VETC-AWS_172.16.x")
-4. Voi thiet bi co event:
-   - GET /api/v2/cmdb/firewall/policy -> toan bo policy hien tai
-   - So voi snapshot cu (logs/snapshots/{device}.json), luu snapshot moi
-5. Lay chi tiet cho tung event:
-   - policy + add/edit/move/clone -> tra trong policy hien tai (live)
-   - policy + delete -> tra trong snapshot CU (snapshot)
-   - named object + add/edit -> goi API rieng (live)
-   - named object + delete -> "unavailable" (han che, xem duoi)
-6. Gui Telegram:
-   - 1 su kien -> 1 tin chi tiet day du
-   - >1 su kien -> 1 tin tong hop + tung tin chi tiet
-   - Event tu FAZ duoc ghi chu rieng de canh bao local log co van de
-
-## Mau sac / icon theo action
-
-| Action | Y nghia |
-|--------|---------|
-| add (xanh)        | Them rule moi |
-| edit (vang)       | Sua rule (bao gom enable/disable) |
-| delete (do)       | Xoa rule |
-| move (xanh duong) | Di chuyen vi tri rule |
-| clone (tim)       | Nhan ban rule |
-
-Trang thai rule: Enable / Disable. Action policy: ACCEPT / DENY / IPSEC.
-
-## Luu y ve DELETE va snapshot
-
-- **firewall.policy/policy6**: khi bi xoa, script tra source/dest/service
-  tu SNAPSHOT cua lan chay TRUOC. LAN CHAY DAU TIEN (hoac sau khi xoa
-  logs/snapshots/) se khong co du lieu cho rule bi xoa trong chinh lan
-  chay do - chay `python monitor.py --test` truoc de tao snapshot ban dau.
-
-- **Named object (address/vip/service/addrgrp/ippool) khi bi XOA**: hien
-  tai tra "unavailable" vi snapshot chi luu firewall.policy.
+`playbook.yml` da duoc cap nhat de chay `reset_monitor.py` (thay vi
+`monitor.py` cu).
 
 ## Exit codes
 
@@ -266,21 +295,17 @@ Trang thai rule: Enable / Disable. Action policy: ACCEPT / DENY / IPSEC.
 
 | Van de | Nguyen nhan |
 |--------|-------------|
-| `--test` FAIL system/status | Sai token FGT, hoac IP may chay script chua trong trusthost |
-| FAIL cmdb/firewall/policy | Token FGT thieu quyen Read Firewall Policy |
-| FAIL log event (ca 4 endpoint) | Kiem tra `show log memory setting` / `show log disk setting` / `show log eventfilter` tren FGT - "set status disable" la nguyen nhan thuong gap |
-| Loi HTML (`<!DOCTYPE HTML...`) thay vi JSON | Trang loi web server/proxy, KHONG phai FortiGate API. Chay `--diagnose`, kiem tra dung admin-sport |
-| FAZ login FAIL | Sai faz.url/username/faz_password; kiem tra quyen ADOM cua user FAZ |
-| FAZ query khong tra du lieu | Sai faz_devid - phai khop cot "Data Source ID" tren FAZ Log View |
-| Alert lien tuc co dong "Phat hien qua FAZ" | Local log tren FGT co van de - kiem tra log memory/disk setting va eventfilter |
-| Alert thieu source/dest cho rule da xoa | Chua co snapshot (lan chay dau) - chay --test truoc |
-| Telegram FAIL | Sai bot_token/chat_id |
+| `--test` FAIL FAZ_API_Token | Sai `faz_api_token`, hoac user FAZ thieu quyen Log View ADOM root |
+| Query ra 0 ket qua du data co that | Kiem tra dung dang dung `devname` (khong phai `devid`) trong filter - xem phan "GHI CHU QUAN TRONG" o tren |
+| Alert bi trung lap giua cac lan chay | Xoa `logs/reset_seen.json` neu muon reset lai dedup, hoac kiem tra `interval_minutes` co bi qua ngan/chong lap khong |
+| Telegram FAIL | Sai `bot_token`/`chat_id` |
+| Muon giam sat them dai IP/cong/thiet bi khac | Sua `settings.json -> reset_monitor` (`shb_src_ips`, `napas_dst_ips`, `dst_ports`, `device_name`) |
 
 ## Push GitHub
 
 ```bash
 git init && git add .
-git commit -m "feat: FortiGate rule change monitor - FGT direct + FAZ failover"
+git commit -m "feat: FAZ reset alert monitor SHB<->NAPAS (remove rule-change monitor)"
 git push origin main
 ```
 

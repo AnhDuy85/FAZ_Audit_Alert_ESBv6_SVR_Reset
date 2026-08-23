@@ -6,37 +6,41 @@
   },
   "devices": [
     {
-      "name": "004_DC-FW-DMZ",
-      "devid": "FG6H1FTB22903740",
-      "platform": "FortiGate-601F"
-    },
-    {
       "name": "004_DC-FW-PARTNER",
       "devid": "FG5H1ETB19908551",
       "platform": "FortiGate-501E"
-    },
-    {
-      "name": "004_DC-FW-INTERNET",
-      "devid": "FG4H1FT924905793",
-      "platform": "FortiGate-401F"
     }
   ],
-  "monitor": {
-    "interval_minutes": 20,
-    "max_rows": 500,
-    "watch_actions": ["edit", "add", "delete", "move", "clone", "disable", "enable"],
-    "watch_keywords": [
-      "firewall.policy",
-      "firewall.policy6",
-      "firewall.address",
-      "firewall.addrgrp",
-      "firewall.service",
-      "firewall.vip",
-      "firewall.ippool"
+  "reset_monitor": {
+    "_comment": "DUY NHAT chuc nang con lai cua he thong: canh bao phien ket noi SHB <-> NAPAS bi RESET (server-rst/client-rst), doc tu FAZ LOG TRAFFIC. Chay bang script reset_monitor.py. monitor.py (canh bao doi/tao/xoa/tat/bat rule) da bi TAT HAN - khong con lien quan gi den he thong nay nua.",
+    "enabled": true,
+    "device_name": "004_DC-FW-PARTNER",
+    "interval_minutes": 10,
+    "max_rows": 200,
+    "watch_actions": ["server-rst", "client-rst"],
+    "dst_ports": [35787, 35789],
+    "shb_src_ips": [
+      "10.18.38.21",
+      "10.4.38.21",
+      "10.4.38.22",
+      "10.4.38.23",
+      "10.4.38.24",
+      "10.4.38.43",
+      "10.4.38.44",
+      "10.4.38.51",
+      "10.4.38.52",
+      "10.4.38.53",
+      "10.4.38.54",
+      "10.4.38.55",
+      "10.4.38.56"
+    ],
+    "napas_dst_ips": [
+      "10.1.253.2",
+      "10.1.249.2"
     ]
   },
   "telegram": {
-    "chat_id": "-5535287620"
+    "chat_id": "-5108753352"
   },
   "faz_dashboard_url": "https://10.4.81.31/ui/dvm/main/fazgroups/-3"
 }

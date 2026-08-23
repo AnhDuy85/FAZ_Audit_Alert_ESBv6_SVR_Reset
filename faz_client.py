@@ -1,70 +1,61 @@
 """
 faz_client.py — FortiAnalyzer Log View REST API client
-==============================================================================
-Dung lam NGUON DU PHONG cho event log, song song voi ket noi truc tiep
-FortiGate (fgt_client.py).
 
-Ly do ket hop:
-  - FortiGate forward log len FAZ qua "config log fortianalyzer setting",
-    cau hinh NAY DOC LAP voi "config log memory/disk setting" tren tung FGT.
-  - Neu local log tren 1 FGT bi tat/sai cau hinh (nhu da gap voi
-    003_DC-FW-INT: "log memory setting status disable"), FAZ van co the
-    da ghi nhan event do qua forward log -> khong bi mat alert.
-  - FAZ KHONG cung cap source/destination/port -> van can fgt_client.py
-    de enrich chi tiet policy.
+Duy nhat 1 chuc nang: query_traffic_resets() - truy van LOG TRAFFIC tren
+FAZ de bat cac phien bi RESET (Firewall Action = server-rst / client-rst)
+giua dai IP SHB (ESB) va dai IP NAPAS, tren cong 35787/35789. Dung boi
+reset_monitor.py.
 
-Da verify hoat dong tren FAZ v7.6.3-build3492.
+Auth: Bearer API Token qua header Authorization (settings.json/secrets.json
+-> faz_api_token). Khong can username/password, khong can login Web UI.
 
-API:
-  /jsonrpc  method "get"  url /dvmdb/adom/{adom}/device        -> test connection
-  /jsonrpc  method "add"  url /logview/adom/{adom}/logsearch   -> tao search task,
-                                                                    tra {"tid": N}
+API dung:
+  /jsonrpc  method "add"  url /logview/adom/{adom}/logsearch
+            -> tao search task, tra {"tid": N}
   /jsonrpc  method "get"  url /logview/adom/{adom}/logsearch/{tid}
-                                                                -> poll ket qua,
-                                                                    tra {"data": [...],
-                                                                    "percentage": 100}
-
-Auth: Bearer API Token qua header Authorization (KHONG can username/password,
-KHONG can login Web UI/cookie session).
+            -> poll ket qua, tra {"data": [...], "percentage": 100}
 
 GHI CHU QUAN TRONG (da debug thuc te tren FAZ v7.6.3-build3492):
   - Method phai la "add" (tao task) / "get" (doc ket qua), KHONG PHAI "exec".
-    Dung "exec" cho module logview se luon tra ve -32600 Invalid Request.
   - Payload JSON-RPC top-level BAT BUOC phai co du "jsonrpc": "2.0" va
-    "session": None, du dang dung Bearer token (khong dang nhap session
-    that). Thieu 2 field nay cung gay -32600 Invalid Request, ngay ca khi
-    method/url/params dung het.
-  - "device" phai la list cac dict dang [{"devid": "..."}], KHONG PHAI
-    chuoi/list chuoi tran.
-  - "time-range" dung dang {"start": "YYYY-MM-DDTHH:MM:SS", "end": "..."},
-    KHONG PHAI {"last": seconds}.
-  - "filter" dung dau "=" don va noi bang "or" viet thuong, gia tri bo
-    trong dau nhay kep, vi du:
-    'action = "edit" or action = "add" or action = "delete"'.
+    "session": None, du dang dung Bearer token.
+  - "time-range" dung dang {"start": "YYYY-MM-DDTHH:MM:SS", "end": "..."}.
+  - "filter" dung dau "=" don, noi bang "and"/"or" viet thuong, gia tri
+    IP/chuoi bo trong dau nhay kep, so (port) khong can nhay kep.
+  - **KHONG the loc log TRAFFIC theo `device: [{"devid": "..."}]`** du
+    dung dung devid that - FAZ nay tra ve total-count=0 bat ke dieu kien.
+    Ly do: devid ghi trong tung dong log TRAFFIC khong trung voi devid
+    quan ly trong Device Manager/settings.json.
+  - **Cach dung dung (da verify)**: dung `device: [{"devid": "All_Device"}]`,
+    roi dua dieu kien `devname = "004_DC-FW-PARTNER"` VAO TRONG chuoi
+    filter cung voi srcip/dstip/dstport/action. Xem query_traffic_resets()
+    ben duoi.
 
-Da verify hoat dong tren FAZ v7.6.3-build3492.
+Raw log traffic thuc te tren FAZ (Log View > Logs, filter
+Source IP=10.4.38.* AND Firewall Action=server-rst):
 
-Python stdlib only.
+  date=2026-08-20 time=09:58:23 itime=2026-08-20 09:58:24 ...
+  type=traffic subtype=forward level=notice action=server-rst
+  policyid=872 sessionid=181156104 srcip=10.4.38.54 dstip=10.1.249.2
+  transip=10.253.196.24 srcport=57498 dstport=35789 transport=57498
+  trandisp=snat duration=5 proto=6 sentbyte=60 rcvdbyte=40 sentpkt=1
+  rcvdpkt=1 logid=0000000013 service=NAPAS-PROD-ACQ_35789
+  app=NAPAS-PROD-ACQ_35789
+
+Python stdlib + `requests`.
 """
 
 import json
 import logging
 import ssl
 import time
-import http.cookiejar
-import urllib.request
-import urllib.error
-import requests  # type: ignore # <--- BỔ SUNG DÒNG NÀY Ở ĐẦU FILE
+
+import requests  # type: ignore
 
 from datetime import datetime, timedelta
 
 log = logging.getLogger("faz")
 
-_SSL = ssl.create_default_context()
-_SSL.check_hostname = False
-_SSL.verify_mode    = ssl.CERT_NONE
-
-_LOGVIEW_REFERER_PATH = "/ui/logview/logs/logview_all/31/26"
 _FETCH_MAX_RETRIES = 20
 _FETCH_POLL_DELAY  = 0.5
 
@@ -73,37 +64,22 @@ class FAZError(Exception):
     pass
 
 
-def _classify_change(record: dict) -> str:
-    """
-    Xac dinh loai thay doi cu the tu 1 record log, uu tien nhan dien
-    DISABLE/ENABLE ngay ca khi action ghi la "edit" chung chung.
+def _build_ip_or_filter(field: str, ip_list: list) -> str:
+    """'srcip', ['10.4.38.21','10.4.38.22'] -> '(srcip = "10.4.38.21" or srcip = "10.4.38.22")'"""
+    parts = [f'{field} = "{ip}"' for ip in ip_list]
+    return "(" + " or ".join(parts) + ")"
 
-    GIA DINH VE FIELD (dua tren cau truc audit log pho bien cua
-    FortiGate/FAZ - can doi chieu lai voi log thuc te neu ten field
-    tren thiet bi cua ban khac):
-      - action:  "edit" | "add" | "delete" | "move" | "clone" | ...
-      - cfgattr: chuoi mo ta thuoc tinh da doi, vi du
-                 'status[enable->disable]' khi tat 1 rule.
-    Neu cfgattr khong co hoac khong dung format nay, ham se fallback
-    ve action goc, KHONG suy doan sai.
-    """
-    action = str(record.get("action", "")).lower()
-    cfgattr = str(record.get("cfgattr", "")).lower()
 
-    if action == "disable":
-        return "DISABLE_RULE"
-    if action == "enable":
-        return "ENABLE_RULE"
-    if action == "delete":
-        return "DELETE_RULE"
+def _build_port_or_filter(field: str, ports: list) -> str:
+    """'dstport', [35787, 35789] -> '(dstport = 35787 or dstport = 35789)'"""
+    parts = [f"{field} = {p}" for p in ports]
+    return "(" + " or ".join(parts) + ")"
 
-    if action == "edit" and "status" in cfgattr:
-        if "->disable" in cfgattr:
-            return "DISABLE_RULE"
-        if "->enable" in cfgattr:
-            return "ENABLE_RULE"
 
-    return action.upper() or "UNKNOWN"
+def _build_action_or_filter(actions: list) -> str:
+    parts = [f'action = "{a}"' for a in actions]
+    return "(" + " or ".join(parts) + ")"
+
 
 class FAZClient:
     def __init__(self, url: str, api_token: str, adom: str = "root"):
@@ -123,18 +99,18 @@ class FAZClient:
             res = requests.post(self.url, json=payload, headers=self.headers, verify=False, timeout=30)
             res.raise_for_status()
             res_json = res.json()
-            
+
             if "result" in res_json:
                 result_data = res_json["result"]
-                
+
                 if isinstance(result_data, list) and len(result_data) > 0:
                     first_res = result_data[0]
                     status = first_res.get("status", {})
                     # SỬA TẠI ĐÂY: Nếu code khác 0 -> Ép ném lỗi ra ngoài ngay lập tức
-                    if status.get("code", 0) != 0: 
+                    if status.get("code", 0) != 0:
                         raise Exception(f"FAZ Error [{status.get('code')}]: {status.get('message')}")
                     return first_res
-                    
+
                 elif isinstance(result_data, dict):
                     status = result_data.get("status", {})
                     if status.get("code", 0) != 0:
@@ -164,27 +140,52 @@ class FAZClient:
         except Exception:
             return False
 
-    def query_device_events(self, devid: str, minutes: int, max_rows: int = 500) -> list:
+    def query_traffic_resets(self, devname: str, minutes: int, src_ips: list,
+                              dst_ips: list, dst_ports: list,
+                              actions: list = None, max_rows: int = 200) -> list:
         """
-        Lay danh sach log thay doi cau hinh qua /logview/adom/{adom}/logsearch,
-        dung API Token qua /jsonrpc (KHONG can username/password).
-        Chi tiet cac rang buoc format bat buoc: xem ghi chu dau file.
+        Truy van LOG TRAFFIC tren FAZ, loc theo srcip/dstip/dstport/action,
+        dung de bat RESET (server-rst / client-rst) giua SHB (ESB) va NAPAS.
+
+        QUAN TRONG - da debug thuc te (xem README):
+          - Tham so "device" cap tren (vi du [{"devid": "..."}]) KHONG loc
+            duoc log TRAFFIC tren FAZ nay - du dung dung devid that, van
+            tra ve total-count=0.
+          - Ly do: devid thuc te ghi trong tung dong log TRAFFIC (vi du
+            "FG5H1E5819905057") KHONG TRUNG voi devid cua thiet bi trong
+            Device Manager / settings.json (vi du "FG5H1ETB19908551") -
+            co the do FAZ ghi devid theo serial goc tai thoi diem log,
+            khac voi devid hien dang quan ly. => KHONG THE dung devid de
+            loc traffic log duoc.
+          - Cach lam dung (da verify): dung device=[{"devid": "All_Device"}]
+            (khong loc theo device o tang API), roi dua dieu kien
+            'devname = "<ten thiet bi>"' VAO TRONG chuoi filter cung voi
+            srcip/dstip/dstport/action. devname MATCH dung va tra ve dung
+            ket qua.
+
+        actions mac dinh = ["server-rst", "client-rst"] (ca 2 chieu reset:
+        server tuc NAPAS gui RST, hoac client tuc SHB gui RST).
+
+        Tra ve list dict = cac dong log traffic tho tu FAZ (chua qua
+        normalize) - dung reset_filter.normalize_reset_event() de chuan hoa
+        truoc khi gui alert.
         """
+        if actions is None:
+            actions = ["server-rst", "client-rst"]
+
         search_url = f"/logview/adom/{self.adom}/logsearch"
 
         now = datetime.now()
         start_time = now - timedelta(minutes=minutes)
         time_fmt = "%Y-%m-%dT%H:%M:%S"
 
-        # CÚ PHÁP FILTER CHUẨN: dấu "=" đơn, nối bằng "or" viết thường,
-        # giá trị bọc trong dấu nháy kép (theo đúng tài liệu Fortinet).
-        # Thêm "disable"/"enable" phòng truong hop FAZ ghi rieng 2 action
-        # nay (khong gop chung vao "edit") khi rule bi tat/bat.
-        filter_str = (
-            'action = "edit" or action = "add" or action = "delete" '
-            'or action = "move" or action = "clone" '
-            'or action = "disable" or action = "enable"'
-        )
+        filter_str = " and ".join([
+            f'devname = "{devname}"',
+            _build_ip_or_filter("srcip", src_ips),
+            _build_ip_or_filter("dstip", dst_ips),
+            _build_port_or_filter("dstport", dst_ports),
+            _build_action_or_filter(actions),
+        ])
 
         add_payload = {
             "jsonrpc": "2.0",
@@ -194,9 +195,9 @@ class FAZClient:
                 {
                     "apiver": 3,
                     "case-sensitive": False,
-                    "device": [{"devid": devid}],
-                    "logtype": "event",
-                    "subtype": "system",
+                    "device": [{"devid": "All_Device"}],
+                    "logtype": "traffic",
+                    "subtype": "forward",
                     "filter": filter_str,
                     "time-order": "desc",
                     "time-range": {
@@ -206,16 +207,15 @@ class FAZClient:
                     "url": search_url,
                 }
             ],
-            "id": 2
+            "id": 3,
         }
 
-        log.debug("FAZ REQUEST (add): %s", json.dumps(add_payload))
+        log.debug("FAZ REQUEST traffic (add): %s", json.dumps(add_payload))
 
         add_res = self._post(add_payload)
-
         tid = add_res.get("tid")
         if tid is None:
-            raise FAZError(f"logsearch (add) khong tra ve tid: {add_res}")
+            raise FAZError(f"logsearch traffic (add) khong tra ve tid: {add_res}")
 
         fetch_payload = {
             "jsonrpc": "2.0",
@@ -229,14 +229,14 @@ class FAZClient:
                     "url": f"{search_url}/{tid}",
                 }
             ],
-            "id": 2
+            "id": 3,
         }
 
         collected = []
-        for attempt in range(_FETCH_MAX_RETRIES):
+        for _ in range(_FETCH_MAX_RETRIES):
             fetch_res = self._post(fetch_payload)
 
-            log.debug("FAZ RESPONSE (fetch tid=%s): %s", tid, json.dumps(fetch_res))
+            log.debug("FAZ RESPONSE traffic (fetch tid=%s): %s", tid, json.dumps(fetch_res))
 
             batch = fetch_res.get("data", [])
             if isinstance(batch, list) and batch:
@@ -248,13 +248,6 @@ class FAZClient:
 
             time.sleep(_FETCH_POLL_DELAY)
         else:
-            log.warning("FAZ logsearch tid=%s chua hoan tat sau %s lan poll", tid, _FETCH_MAX_RETRIES)
-
-        # Gan nhan change_type cho tung record (vi du DISABLE_RULE) de
-        # code goi ham (monitor.py) de phan biet muc do nghiem trong,
-        # khong can tu doi chieu action/cfgattr o tang tren nua.
-        for record in collected:
-            if isinstance(record, dict):
-                record["change_type"] = _classify_change(record)
+            log.warning("FAZ logsearch traffic tid=%s chua hoan tat sau %s lan poll", tid, _FETCH_MAX_RETRIES)
 
         return collected[:max_rows]
