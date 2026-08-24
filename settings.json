@@ -4,6 +4,7 @@
     "url": "https://10.4.81.31",
     "adom": "root"
   },
+
   "devices": [
     {
       "name": "004_DC-FW-PARTNER",
@@ -11,14 +12,49 @@
       "platform": "FortiGate-501E"
     }
   ],
+
   "reset_monitor": {
-    "_comment": "DUY NHAT chuc nang con lai cua he thong: canh bao phien ket noi SHB <-> NAPAS bi RESET (server-rst/client-rst), doc tu FAZ LOG TRAFFIC. Chay bang script reset_monitor.py. monitor.py (canh bao doi/tao/xoa/tat/bat rule) da bi TAT HAN - khong con lien quan gi den he thong nay nua.",
     "enabled": true,
     "device_name": "004_DC-FW-PARTNER",
-    "interval_minutes": 10,
+
+    "interval_minutes": 1,
+    "query_lookback_minutes": 2,
+
+    "summary_interval_minutes": 10,
+
+    "server_reset_window_minutes": 10,
+    "server_reset_high_rate_per_min": 3.0,
+
     "max_rows": 200,
-    "watch_actions": ["server-rst", "client-rst"],
-    "dst_ports": [35787, 35789],
+
+    "watch_actions": [
+      "server-rst",
+      "client-rst"
+    ],
+
+    "dst_ports": [
+      35787,
+      35789
+    ],
+
+    "consecutive_fail_threshold": 3,
+
+    "threshold_matrix": {
+      "CLIENT_FAST": {
+        "warning_1m": 5,
+        "warning_5m": 15,
+        "critical_1m": 10,
+        "critical_5m": 30
+      },
+
+      "CLIENT_LONG": {
+        "warning_1m": 3,
+        "warning_5m": 10,
+        "critical_1m": 5,
+        "critical_5m": 20
+      }
+    },
+
     "shb_src_ips": [
       "10.18.38.21",
       "10.4.38.21",
@@ -34,13 +70,18 @@
       "10.4.38.55",
       "10.4.38.56"
     ],
+
     "napas_dst_ips": [
-      "10.1.253.2",
-      "10.1.249.2"
-    ]
+      "10.1.249.2",
+      "10.1.253.2"
+    ],
+
+    "heartbeat_url": ""
   },
+
   "telegram": {
     "chat_id": "-5108753352"
   },
+
   "faz_dashboard_url": "https://10.4.81.31/ui/dvm/main/fazgroups/-3"
 }
