@@ -127,7 +127,79 @@ return "FAST_RESET" if duration <= 5 else "LONG_CONN_RESET"
 }
 ```
 
-### 1. MOI phien RESET duoc alert NGAY LAP TUC + tong hop dinh ky
+### 1. NAPAS SERVER RESET + SHB CLIENT RESET: mo hinh 2 pha (TUC THOI + cua so tong hop) — QUAN TRONG NHAT, AP DUNG CHO CA 2 HUONG
+
+**Mo hinh (ap dung dong nhat cho CA server-rst VA client-rst - 2 cua so
+DOC LAP NHAU, khong anh huong lan nhau)**:
+
+```
+RESET dau tien cua 1 huong (chua co cua so nao mo cho huong do)
+        │
+        ▼
+   🚨 ALERT TUC THOI → NOC/IT xu ly ngay
+        │
+        ▼
+   MO cua so tong hop 10 phut (server_reset_window_minutes)
+        │
+        ├─ RESET tiep theo CUNG HUONG → CHI ghi nhan (dem theo tung server)
+        ├─ RESET tiep theo CUNG HUONG → CHI ghi nhan
+        ├─ ...
+        ▼
+   Het 10 phut, CON reset moi trong chu ky nay?
+        │
+   ┌────┴────┐
+  CO           KHONG
+   │             │
+   ▼             ▼
+📊 SUMMARY    ✅ RESOLVED
+(RENEW chu    (DONG han cua
+ky, lap lai   so - RESET tiep
+tu dau, tiep  theo se lai
+tuc theo doi) trigger tu dau)
+```
+
+- **Alert tuc thoi** (`build_alert_reset_window_immediate`): gui NGAY khi
+  phat hien phien DAU TIEN cua 1 dot (khong co cua so nao dang mo CHO
+  HUONG DO). Tieu de tu dong doi theo huong:
+  `🆘 CRITICAL — NAPAS SERVER RESET` (server-rst) hoac
+  `🆘 CRITICAL — SHB CLIENT RESET` (client-rst).
+- **Cac phien tiep theo CUNG HUONG trong cung cua so**: KHONG gui alert
+  rieng le - chi cong don vao `state["srv_window_per_server"]` (cho
+  server-rst) hoac `state["cli_window_per_server"]` (cho client-rst).
+- **Tin tong hop** (`build_alert_reset_window_summary`): gui MOI KHI het
+  1 chu ky `server_reset_window_minutes` phut (mac dinh 10) **VA chu ky
+  do CO reset moi** - gom: Total Reset, Affected Server, Top Reset, Reset
+  Rate, danh gia. Sau khi gui, chu ky duoc **RENEW** (dem lai tu 0,
+  KHONG dong cua so) - neu su co van tiep dien, tin tong hop se **LAP
+  LAI MOI 10 PHUT** cho den khi het.
+- **Tin RESOLVED** (`build_alert_reset_window_resolved`): gui khi 1 chu
+  ky TRON VEN `server_reset_window_minutes` phut **HOAN TOAN KHONG co
+  reset moi** nao (cho huong do) - bao hieu dot su co da ket thuc/duoc
+  xu ly xong. Sau tin nay, cua so **DONG HAN** - lan RESET tiep theo
+  (cung huong) se lai trigger ALERT TUC THOI + mo dot moi tu dau.
+
+```jsonc
+"server_reset_window_minutes": 10,
+"server_reset_high_rate_per_min": 3.0
+```
+
+**Da test/verify (vong doi day du)**: phien dau tien -> ALERT TUC THOI;
+qua 10 phut van con reset -> SUMMARY + RENEW (khong dong); qua 10 phut
+nua van con reset -> SUMMARY lan 2 + RENEW; qua 10 phut tiep theo KHONG
+con reset nao -> RESOLVED + DONG han cua so. Dung 4 tin cho ca vong doi,
+dung thu tu: CRITICAL -> SUMMARY -> SUMMARY -> RESOLVED.
+
+**Ap dung cho ca FAST va LONG duration** (khong phan biet nua) - ban
+than viec server-rst/client-rst xay ra da la dieu can canh bao, khong
+phu thuoc thoi gian song cua phien.
+
+**Ly do thay doi (so voi thiet ke truoc)**: ban dau chi uu tien
+server-rst (rate-limit 60s + WARNING/CRITICAL group cho client-rst).
+Sau khi phat hien case thuc te (client-rst voi duration ~80 gio, tuong
+quan voi su co ACQ FAIL tang ung dung), quyet dinh ap dung CUNG mo hinh
+tuc thoi+tong hop cho CA 2 huong de khong bo lot tin hieu canh bao nao.
+
+### 2. Tin tong hop dinh ky TONG THE (khong phan biet category)
 
 Hanh vi hien tai:
 - **Moi phien RESET moi phat hien** (server-rst hoac client-rst) duoc
@@ -143,7 +215,7 @@ Co che tong hop nay dung **state file** (`logs/monitor_state.json`) de
 `interval_minutes=1` nghia la 1 lan quet chi co ~1-2 phut du lieu,
 khong du de tong hop dung 5 phut trong 1 lan quet don le.
 
-### 2. Lich quet 1 phut/lan tren AWX
+### 3. Lich quet 1 phut/lan tren AWX
 
 `interval_minutes=1` + `query_lookback_minutes=2` nghia la: **lich AWX
 Schedule can dat `*/1 * * * *`** (moi 1 phut), va moi lan quet se query
@@ -159,7 +231,7 @@ neu nhieu nguoi/he thong khac cung dang dung chung FAZ Log View).
 `playbook.yml` da chinh `timeout: 45` (bat buoc phai NHO HON 60s de
 khong bi 2 job AWX chay chong lan nhau khi lich la 1 phut).
 
-### 3. Canh bao khi HE THONG GIAM SAT gap su co (khong phai canh bao RESET)
+### 4. Canh bao khi HE THONG GIAM SAT gap su co (khong phai canh bao RESET)
 
 Neu FAZ query loi **lien tiep** >= `consecutive_fail_threshold` lan (vi
 du token het han, mat mang toi FAZ), `reset_monitor.py` gui **1 tin
@@ -172,14 +244,14 @@ DANG CHAY** nhung FAZ tra loi loi. Neu script **NGUNG CHAY HOAN TOAN**
 (AWX job bi xoa, cron bi tat, server sap) thi **KHONG co gi tu bao**
 duoc - can dich vu heartbeat ben ngoai (xem muc 3).
 
-### 4. (Da bo) Gop tin khi co "burst" nhieu RESET cung luc
+### 5. (Da bo) Gop tin khi co "burst" nhieu RESET cung luc
 
 Truoc day co co che gop nhieu alert thanh 1 tin khi vuot nguong - **da
 BO HOAN TOAN** ca code lan cau hinh, theo yeu cau moi nhat ("co canh bao
 thi canh bao luon"). Khong con `build_alert_burst_summary()` hay
 `burst_alert_threshold` trong he thong nua.
 
-### 5. Heartbeat / dead-man switch (KHUYEN NGHI cho dich vu cap 3)
+### 6. Heartbeat / dead-man switch (KHUYEN NGHI cho dich vu cap 3)
 
 `reset_monitor.py` co the ping 1 URL ben ngoai (vi du
 [healthchecks.io](https://healthchecks.io) - mien phi cho da so nhu
@@ -197,7 +269,7 @@ Thiet lap:
    heartbeat - **doc lap hoan toan** voi bot Telegram cua reset_monitor.py
    (dung neu bot/token cua chinh he thong nay cung bi loi).
 
-### 6. GHI CHU VE DEDUP TREN AWX (chua giai quyet trietde, CANG QUAN TRONG voi lich 1 phut)
+### 7. GHI CHU VE DEDUP TREN AWX (chua giai quyet trietde, CANG QUAN TRONG voi lich 1 phut)
 
 `logs/reset_seen.json` va `logs/monitor_state.json` chi ton tai trong
 **workspace cua 1 lan chay AWX** - neu AWX KHONG co persistent volume
