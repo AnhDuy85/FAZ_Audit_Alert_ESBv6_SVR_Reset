@@ -260,7 +260,7 @@ def build_alert_reset_window_immediate(direction: str, ev: dict, window_minutes:
         f"⏱️ <b>Duration</b> : <code>{duration}s</code> | TX: <code>{sentbyte}B</code> | RX: <code>{rcvdbyte}B</code>",
         f"🕐 <b>Thời gian</b> : <code>{ev.get('date')} {ev.get('time')}</code>",
         f"⚠️ <b>Action</b> : {lbl['action_hint']}",
-        f"📊 <b>Tiếp theo</b> : Hệ thống sẽ tổng hợp số lần {lbl['actor']} reset trong {window_minutes} phút.",
+        #f"📊 <b>Tiếp theo</b> : Hệ thống sẽ tổng hợp số lần {lbl['actor']} reset trong {window_minutes} phút.",
     ]
     return "\n".join(lines)
 
